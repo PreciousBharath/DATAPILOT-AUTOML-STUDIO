@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block subheading %}Upload a CSV or start from a sample — everything stays on your machine{% endblock %}
+{% block head %}
+<style>
+.drop{border:2px dashed color-mix(in srgb,var(--a1) 55%,transparent);border-radius:22px;padding:42px 20px;text-align:center;cursor:pointer;transition:.3s;position:relative;overflow:hidden}
+.drop:hover,.drop.over{background:color-mix(in srgb,var(--a1) 10%,transparent);transform:scale(1.01)}
+.drop .ic{font-size:54px;display:inline-block;animation:bob 3s ease-in-out infinite}
+@keyframes bob{50%{transform:translateY(-10px)}}
+.drop input{position:absolute;inset:0;opacity:0;cursor:pointer}
+</style>
+{% endblock %}
+{% block content %}
+<div class="grid g-2-1">
+  <form class="card glow fade-up" method="post" action="{{ url_for('upload') }}" enctype="multipart/form-data" id="upForm">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+    <div class="drop" id="drop"><input type="file" name="file" accept=".csv" id="file">
+      <div class="ic">📂</div><h3 style="justify-content:center;margin-top:10px">Drag & drop your CSV here</h3>
+      <div class="muted small">or click to browse · up to 16 MB · first row = headers</div>
+      <div id="fname" class="mt badge accent" style="display:none"></div></div>
+  </form>
+  <div class="card fade-up"><h3><i class="bi bi-stars"></i> Try a sample dataset</h3>
+    {% for key, (name, desc) in SAMPLES.items() %}
+    <form method="post" action="{{ url_for('add_sample', key=key) }}"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+      <button class="list-item w100" style="background:none;border:0;color:inherit;font:inherit;cursor:pointer;text-align:left"><div class="dot-ico">{{ name[:2] }}</div>
+        <div style="flex:1"><b class="small">{{ name[2:] }}</b><div class="muted small">{{ desc }}</div></div><i class="bi bi-arrow-right-circle gradient-text" style="font-size:20px"></i></button></form>
+    {% endfor %}
+  </div>
+</div>
+<div class="card mt fade-up"><h3><i class="bi bi-database"></i> Your datasets</h3>
+  <table class="table"><thead><tr><th>Name</th><th>Rows</th><th>Columns</th><th>Experiments</th><th>Added</th><th class="right">Actions</th></tr></thead><tbody>
+  {% for d in rows %}<tr class="ds" data-t="{{ d.name|lower }}"><td><b>{{ d.name }}</b></td><td>{{ '{:,}'.format(d.rows) }}</td><td>{{ d.cols }}</td><td><span class="badge">{{ d.n_exp }}</span></td><td class="muted small">{{ d.created_at[:16] }}</td>
+    <td class="right"><div class="row" style="justify-content:flex-end;flex-wrap:nowrap"><a class="btn btn-ghost btn-sm" href="{{ url_for('eda', did=d.id) }}"><i class="bi bi-bar-chart"></i> Explore</a>
+      <a class="btn btn-primary btn-sm" href="{{ url_for('automl', did=d.id) }}"><i class="bi bi-cpu"></i> AutoML</a>
+      <form method="post" action="{{ url_for('delete_dataset', did=d.id) }}" onsubmit="return confirm('Delete dataset?')"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn btn-ghost btn-sm"><i class="bi bi-trash"></i></button></form></div></td></tr>
+  {% else %}<tr><td colspan="6"><div class="empty"><i class="bi bi-inbox"></i>No datasets yet</div></td></tr>{% endfor %}</tbody></table>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+const drop = document.getElementById('drop');
+['dragenter', 'dragover'].forEach(e => drop.addEventListener(e, ev => { ev.preventDefault(); drop.classList.add('over'); }));
+['dragleave', 'drop'].forEach(e => drop.addEventListener(e, () => drop.classList.remove('over')));
+file.onchange = () => { if (!file.files[0]) return; fname.style.display = 'inline-flex'; fname.textContent = '⏳ Uploading ' + file.files[0].name; upForm.submit(); };
+globalSearch.oninput = e => document.querySelectorAll('.ds').forEach(r => r.style.display = r.dataset.t.includes(e.target.value.toLowerCase()) ? '' : 'none');
+</script>
+{% endblock %}

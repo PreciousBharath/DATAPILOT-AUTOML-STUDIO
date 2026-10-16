@@ -1,0 +1,50 @@
+{% extends "base.html" %}
+{% block subheading %}Automatic exploratory data analysis · {{ p.rows|string }} rows × {{ p.cols }} columns{% endblock %}
+{% block topbar_extra %}<a class="btn btn-primary btn-sm" href="{{ url_for('automl', did=ds.id) }}"><i class="bi bi-cpu"></i> Train models</a>{% endblock %}
+{% block head %}
+<style>
+.heat{display:grid;gap:3px;font-size:11px}.heat div{display:grid;place-items:center;border-radius:6px;min-height:40px;font-weight:600;transition:transform .2s}
+.heat div.cell:hover{transform:scale(1.12);z-index:2;box-shadow:var(--shadow)}.heat .lab{color:var(--muted);font-weight:500;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:0 4px}
+.mini{height:150px}
+.prev{overflow:auto}.prev td,.prev th{white-space:nowrap}
+</style>
+{% endblock %}
+{% block content %}
+<div class="grid g4">
+  {% for ic, l, v, c in [('bi-list-ol','Rows',p.rows,''),('bi-layout-three-columns','Columns',p.cols,'c3'),('bi-question-diamond','Missing cells',p.missing,'c2'),('bi-files','Duplicate rows',p.duplicates,'c4')] %}
+  <div class="card hover fade-up"><div class="stat"><div class="ico {{ c }}"><i class="bi {{ ic }}"></i></div><div><div class="lbl">{{ l }}</div><div class="val" data-count="{{ v }}">0</div></div></div></div>{% endfor %}
+</div>
+<div class="grid g-2-1 mt">
+  <div class="card fade-up"><h3><i class="bi bi-grid-3x3"></i> Correlation heatmap</h3><div class="heat" id="heat"></div></div>
+  <div class="card glow fade-up"><h3><i class="bi bi-lightbulb"></i> Auto insights</h3>
+    {% for ic, t in p.insights %}<div class="list-item" style="padding:8px"><div class="dot-ico"><i class="bi {{ ic }}"></i></div><div class="small">{{ t|safe }}</div></div>
+    {% else %}<div class="empty">Clean dataset — no issues found 🎉</div>{% endfor %}
+    <div class="divider"></div><div class="row small muted"><span><b>{{ p.numeric }}</b> numeric</span><span><b>{{ p.categorical }}</b> categorical</span><span><b>{{ p.memory }}</b> KB</span></div></div>
+</div>
+<div class="card mt fade-up"><h3><i class="bi bi-bar-chart-steps"></i> Column distributions</h3>
+  <div class="grid g4" id="dists">{% for c in p.columns %}<div class="card" style="padding:14px"><div class="row between small"><b>{{ c.name }}</b><span class="badge {{ 'info' if c.type == 'numeric' else 'warning' }}">{{ c.type }}</span></div>
+    <div class="mini mt"><canvas data-i="{{ loop.index0 }}"></canvas></div></div>{% endfor %}</div></div>
+<div class="card mt fade-up"><h3><i class="bi bi-table"></i> Column profile</h3>
+  <div style="overflow:auto"><table class="table"><thead><tr><th>Column</th><th>Type</th><th>Missing</th><th>Unique</th><th>Mean / Top</th><th>Std</th><th>Min</th><th>Median</th><th>Max</th><th>Skew</th><th>Outliers</th></tr></thead><tbody>
+  {% for c in p.columns %}<tr><td><b>{{ c.name }}</b></td><td><span class="badge {{ 'info' if c.type == 'numeric' else 'warning' }}">{{ c.type }}</span></td>
+    <td>{% if c.missing %}<span class="badge danger">{{ c.missing }} ({{ c.missing_pct }}%)</span>{% else %}<span class="muted">0</span>{% endif %}</td><td>{{ c.unique }}</td>
+    <td>{{ c.mean if c.type == 'numeric' else c.top }}</td><td>{{ c.std or '—' }}</td><td>{{ c.min if c.type == 'numeric' else '—' }}</td><td>{{ c.median if c.type == 'numeric' else '—' }}</td>
+    <td>{{ c.max if c.type == 'numeric' else '—' }}</td><td>{{ c.skew if c.type == 'numeric' else '—' }}</td><td>{{ c.outliers if c.type == 'numeric' else '—' }}</td></tr>{% endfor %}</tbody></table></div></div>
+<div class="card mt fade-up prev"><h3><i class="bi bi-eye"></i> Preview (first 8 rows)</h3>
+  <table class="table"><thead><tr>{% for h in p.headers %}<th>{{ h }}</th>{% endfor %}</tr></thead><tbody>{% for r in p.preview %}<tr>{% for v in r %}<td>{{ v }}</td>{% endfor %}</tr>{% endfor %}</tbody></table></div>
+{% endblock %}
+{% block scripts %}
+<script>
+const P = {{ p|tojson }}; let ch = [];
+function heat() { const C = P.corr.cols, V = P.corr.values, el = document.getElementById('heat'); if (!C.length) { el.innerHTML = '<div class="empty">Need 2+ numeric columns</div>'; return; }
+  el.style.gridTemplateColumns = `110px repeat(${C.length}, 1fr)`; let h = '<div></div>' + C.map(c => `<div class="lab" title="${esc(c)}">${esc(c)}</div>`).join('');
+  V.forEach((row, i) => { h += `<div class="lab" title="${esc(C[i])}">${esc(C[i])}</div>` + row.map(v => { const a = Math.abs(v), col = v >= 0 ? '245,158,11' : '61,169,252';
+    return `<div class="cell" title="${C[i]} · r=${v}" style="background:rgba(${col},${.12 + a * .85});color:${a > .5 ? '#fff' : 'var(--text)'}">${v.toFixed(2)}</div>`; }).join(''); });
+  el.innerHTML = h; }
+function draw() { ch.forEach(c => c.destroy()); ch = []; applyChartDefaults(); const c = chartColors();
+  document.querySelectorAll('#dists canvas').forEach(cv => { const col = P.columns[+cv.dataset.i];
+    ch.push(new Chart(cv, {type: 'bar', data: {labels: col.hist.labels, datasets: [{data: col.hist.counts, backgroundColor: col.type === 'numeric' ? c.a1 : c.a2, borderRadius: 4, barPercentage: col.type === 'numeric' ? 1 : .8, categoryPercentage: col.type === 'numeric' ? 1 : .8}]},
+      options: {maintainAspectRatio: false, plugins: {legend: {display: false}}, scales: {x: {ticks: {display: col.type !== 'numeric', font: {size: 9}}, grid: {display: false}}, y: {ticks: {font: {size: 9}}}}}})); }); }
+heat(); draw(); addEventListener('themechange', draw);
+</script>
+{% endblock %}

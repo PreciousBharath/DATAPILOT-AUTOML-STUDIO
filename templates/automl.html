@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block subheading %}{{ ds.name }} · pick a target and let DataPilot train & rank models{% endblock %}
+{% block topbar_extra %}<a class="btn btn-ghost btn-sm" href="{{ url_for('eda', did=ds.id) }}"><i class="bi bi-bar-chart"></i> EDA</a>{% endblock %}
+{% block head %}
+<style>
+.pipeline{display:flex;gap:10px;flex-wrap:wrap}.pipeline .st{flex:1;min-width:120px;padding:14px;border-radius:14px;background:var(--input);border:1px solid var(--border);text-align:center;font-size:13px;transition:.4s;opacity:.45}
+.pipeline .st.on{opacity:1;border-color:var(--a1);background:color-mix(in srgb,var(--a1) 14%,transparent)}.pipeline .st.done{opacity:1}.pipeline .st i{font-size:22px;display:block;margin-bottom:4px}
+.lb tr.best td{background:color-mix(in srgb,var(--a1) 12%,transparent)}
+.cm{display:grid;gap:4px;font-size:13px}.cm div{display:grid;place-items:center;min-height:52px;border-radius:8px;font-weight:600}
+</style>
+{% endblock %}
+{% block content %}
+<div class="card glow fade-up">
+  <div class="grid g3">
+    <div class="field"><label>🎯 Target column (what to predict)</label><select id="target">{% for c in cols %}<option {{ 'selected' if loop.last }}>{{ c }}</option>{% endfor %}</select></div>
+    <div class="field"><label>Exclude columns (optional — e.g. IDs or leakage)</label><select id="drop" multiple size="3">{% for c in cols %}<option>{{ c }}</option>{% endfor %}</select></div>
+    <div style="display:flex;align-items:end;padding-bottom:16px"><button class="btn btn-primary btn-block" id="run" style="padding:15px"><i class="bi bi-rocket-takeoff"></i> Run AutoML</button></div>
+  </div>
+  <div class="pipeline" id="pipe">
+    {% for ic, l in [('bi-funnel','Clean & impute'),('bi-sliders','Encode & scale'),('bi-shuffle','Train/test split'),('bi-cpu','Train 5 models'),('bi-check2-square','3-fold CV'),('bi-trophy','Rank & select')] %}
+    <div class="st"><i class="bi {{ ic }}"></i>{{ l }}</div>{% endfor %}</div>
+</div>
+<div id="results" style="display:none">
+  <div class="grid g4 mt" id="kpis"></div>
+  <div class="grid g-2-1 mt">
+    <div class="card fade-up"><h3><i class="bi bi-trophy"></i> Model leaderboard</h3><div style="overflow:auto"><table class="table lb" id="board"></table></div></div>
+    <div class="card fade-up"><h3><i class="bi bi-magic"></i> Live prediction <span class="act badge accent" id="bestName"></span></h3><form id="predForm"></form>
+      <button class="btn btn-primary btn-block mt" id="predBtn"><i class="bi bi-lightning"></i> Predict</button><div id="predOut" class="mt"></div></div>
+  </div>
+  <div class="grid g2 mt">
+    <div class="card fade-up"><h3><i class="bi bi-bar-chart"></i> Feature importance (best model)</h3><div style="height:320px"><canvas id="imp"></canvas></div></div>
+    <div class="card fade-up"><h3 id="evalTitle"><i class="bi bi-grid-3x3"></i> Evaluation</h3><div id="evalBox" style="height:320px"></div></div>
+  </div>
+</div>
+{% endblock %}
+{% block scripts %}
+<script>
+const DID = {{ ds.id }}; let R = null, ch = [];
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+async function animate() { const st = [...document.querySelectorAll('#pipe .st')]; for (const s of st) { st.forEach(x => x.classList.remove('on')); s.classList.add('on'); await sleep(380); s.classList.add('done'); } }
+run.onclick = async () => { run.disabled = true; run.innerHTML = '<i class="bi bi-gear-wide-connected spin"></i> Training…'; document.querySelectorAll('#pipe .st').forEach(s => s.classList.remove('on', 'done'));
+  try { const [r] = await Promise.all([api('/api/automl/' + DID, {body: {target: target.value, drop: [...drop.selectedOptions].map(o => o.value)}}), animate()]); R = r; show(); toast(`Best model: ${r.best} 🏆`, 'success'); }
+  finally { run.disabled = false; run.innerHTML = '<i class="bi bi-rocket-takeoff"></i> Run AutoML'; } };
+function show() {
+  results.style.display = ''; const b = R.board[0], cls = R.task === 'classification';
+  const k = cls ? [['bi-diagram-3', 'Task', 'Classification'], ['bi-trophy', 'Best model', R.best], ['bi-check2-circle', 'Test accuracy', (b.accuracy * 100).toFixed(1) + '%'], ['bi-bullseye', 'Macro F1', b.f1.toFixed(3)]]
+    : [['bi-graph-up', 'Task', 'Regression'], ['bi-trophy', 'Best model', R.best], ['bi-check2-circle', 'Test R²', b.r2.toFixed(3)], ['bi-rulers', 'MAE', b.mae.toLocaleString()]];
+  kpis.innerHTML = k.map(([i, l, v], n) => `<div class="card hover pop"><div class="stat"><div class="ico ${['', 'c4', 'c5', 'c3'][n]}"><i class="bi ${i}"></i></div><div><div class="lbl">${l}</div><div class="val" style="font-size:20px">${esc(v)}</div></div></div></div>`).join('');
+  const cols = cls ? ['cv', 'accuracy', 'f1'] : ['cv', 'r2', 'mae', 'rmse'];
+  board.innerHTML = `<thead><tr><th>#</th><th>Model</th>${cols.map(c => `<th>${c === 'cv' ? 'CV ' + (cls ? 'F1' : 'R²') : c.toUpperCase()}</th>`).join('')}</tr></thead><tbody>` +
+    R.board.map((r, i) => `<tr class="${i ? '' : 'best'} fade-up" style="animation-delay:${i * 90}ms"><td>${i ? i + 1 : '🏆'}</td><td><b>${r.model}</b></td>` + cols.map(c => c === 'cv'
+      ? `<td><div class="progress" style="width:120px;display:inline-block;vertical-align:middle"><span data-w="${Math.max(0, r.cv * 100)}"></span></div> ${r.cv.toFixed(3)} <span class="muted small">±${r.cv_std.toFixed(3)}</span></td>` : `<td>${r[c].toLocaleString()}</td>`).join('') + '</tr>').join('') + '</tbody>';
+  runBars(board); bestName.textContent = R.best;
+  predForm.innerHTML = R.schema.map(s => `<div class="field" style="margin-bottom:10px"><label>${esc(s.name)}</label>${s.type === 'numeric' ? `<input class="input" type="number" step="any" name="${esc(s.name)}" value="${s.default}">`
+    : `<select name="${esc(s.name)}">${s.options.map(o => `<option ${o === s.default ? 'selected' : ''}>${esc(o)}</option>`).join('')}</select>`}</div>`).join('');
+  draw();
+}
+function draw() { if (!R) return; ch.forEach(c => c.destroy()); ch = []; applyChartDefaults(); const c = chartColors();
+  ch.push(new Chart(imp, {type: 'bar', data: {labels: R.detail.importance.labels, datasets: [{data: R.detail.importance.values, backgroundColor: R.detail.importance.labels.map((_, i) => i < 3 ? c.a1 : c.a2 + 'aa'), borderRadius: 8}]},
+    options: {indexAxis: 'y', maintainAspectRatio: false, plugins: {legend: {display: false}}}}));
+  if (R.detail.cm) { evalTitle.innerHTML = '<i class="bi bi-grid-3x3"></i> Confusion matrix (test set)'; const L = R.detail.cm.labels, V = R.detail.cm.values, mx = Math.max(...V.flat());
+    evalBox.innerHTML = `<div class="cm" style="grid-template-columns:90px repeat(${L.length},1fr)"><div></div>${L.map(l => `<div class="muted small">pred ${esc(l)}</div>`).join('')}` +
+      V.map((r, i) => `<div class="muted small">true ${esc(L[i])}</div>` + r.map((v, j) => `<div style="background:${i === j ? 'rgba(34,197,94,' : 'rgba(239,68,68,'}${.15 + .8 * v / mx});color:#fff">${v}</div>`).join('')).join('') + '</div>'; }
+  else { evalTitle.innerHTML = '<i class="bi bi-bullseye"></i> Actual vs predicted (test set)'; evalBox.innerHTML = '<canvas id="sc"></canvas>'; const xs = R.detail.scatter.map(p => p.x), mn = Math.min(...xs), mx = Math.max(...xs);
+    ch.push(new Chart(document.getElementById('sc'), {type: 'scatter', data: {datasets: [{label: 'Predictions', data: R.detail.scatter, backgroundColor: c.a1 + 'aa', pointRadius: 4},
+      {type: 'line', label: 'Perfect fit', data: [{x: mn, y: mn}, {x: mx, y: mx}], borderColor: c.a2, borderDash: [6, 6], pointRadius: 0}]}, options: {maintainAspectRatio: false, scales: {x: {title: {display: true, text: 'Actual'}}, y: {title: {display: true, text: 'Predicted'}}}}})); }
+}
+predBtn.onclick = async () => { const v = Object.fromEntries(new FormData(predForm)); const r = await api('/api/predict/' + R.experiment_id, {body: v});
+  predOut.innerHTML = `<div class="card pop center" style="padding:18px"><div class="muted small">Predicted ${esc(target.value)}</div><div style="font-size:34px;font-weight:700" class="gradient-text">${esc(r.prediction)}</div>` +
+    (r.proba ? Object.entries(r.proba).map(([k, p]) => `<div class="row between small mt"><span>${esc(k)}</span><b>${(p * 100).toFixed(1)}%</b></div><div class="progress"><span style="width:${p * 100}%"></span></div>`).join('') : '') + '</div>'; };
+addEventListener('themechange', draw);
+{% if preload %}R = {{ preload|tojson }}; target.value = R.target; show();{% endif %}
+</script>
+{% endblock %}

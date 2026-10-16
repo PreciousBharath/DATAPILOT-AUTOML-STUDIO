@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block subheading %}Every AutoML run, its winner and score — reopen to predict again{% endblock %}
+{% block content %}
+<div class="card fade-up">
+  <table class="table"><thead><tr><th>#</th><th>Dataset</th><th>Target</th><th>Task</th><th>Best model</th><th>CV score</th><th>When</th><th></th></tr></thead><tbody>
+  {% for e in rows %}<tr><td>{{ e.id }}</td><td><b>{{ e.dname }}</b></td><td><span class="badge accent">{{ e.target }}</span></td><td>{{ e.task }}</td><td>🏆 {{ e.best_model }}</td>
+    <td><div class="progress" style="width:120px;display:inline-block;vertical-align:middle"><span data-w="{{ [e.best_score*100,0]|max }}"></span></div> {{ '%.3f'|format(e.best_score) }}</td>
+    <td class="muted small">{{ e.created_at[:16] }}</td><td><a class="btn btn-ghost btn-sm" href="{{ url_for('experiment', eid=e.id) }}"><i class="bi bi-box-arrow-up-right"></i> Open</a></td></tr>
+  {% else %}<tr><td colspan="8"><div class="empty"><i class="bi bi-cpu"></i>No experiments yet — open a dataset and run AutoML</div></td></tr>{% endfor %}</tbody></table>
+</div>
+{% endblock %}
